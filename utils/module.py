@@ -406,7 +406,7 @@ class QKVAttention(nn.Module):
         score_tensor = F.softmax(torch.matmul(
             linear_query,
             linear_key.transpose(-2, -1)
-        ), dim=-1) / math.sqrt(self.__hidden_dim)
+        ) / math.sqrt(self.__hidden_dim), dim=-1)
         forced_tensor = torch.matmul(score_tensor, linear_value)
         forced_tensor = self.__dropout_layer(forced_tensor)
 
