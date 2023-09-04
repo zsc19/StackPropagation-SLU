@@ -1,10 +1,10 @@
 """
-@Author		:           Lee, Qin
+@Author		:           Zhou
 @StartTime	:           2018/08/13
-@Filename	:           train.py
+@Filename	:           process.py
 @Software	:           Pycharm
 @Framework  :           Pytorch
-@LastModify	:           2019/05/07
+@LastModify	:           2023/09/04
 """
 
 from utils.module import ModelManager
@@ -18,8 +18,10 @@ import json
 import random
 import argparse
 import numpy as np
+import warnings
+warnings.filterwarnings("ignore")
 
-parser = argparse.ArgumentParser()
+parser = argparse.ArgumentParser()  # 创建解析
 
 # Training parameters.
 parser.add_argument('--data_dir', '-dd', type=str, default='data/atis')
@@ -35,7 +37,7 @@ parser.add_argument("--differentiable", "-d", action="store_true", default=False
 parser.add_argument('--slot_forcing_rate', '-sfr', type=float, default=0.9)
 
 # model parameters.
-parser.add_argument('--word_embedding_dim', '-wed', type=int, default=64)
+parser.add_argument('--word_embedding_dim', '-wed', type=int, default=256)
 parser.add_argument('--encoder_hidden_dim', '-ehd', type=int, default=256)
 parser.add_argument('--intent_embedding_dim', '-ied', type=int, default=8)
 parser.add_argument('--slot_embedding_dim', '-sed', type=int, default=32)
@@ -45,15 +47,15 @@ parser.add_argument('--attention_hidden_dim', '-ahd', type=int, default=1024)
 parser.add_argument('--attention_output_dim', '-aod', type=int, default=128)
 
 if __name__ == "__main__":
-    args = parser.parse_args()
+    args = parser.parse_args()   # 解析参数
 
     # Save training and model parameters.
     if not os.path.exists(args.save_dir):
-        os.system("mkdir -p " + args.save_dir)
+        os.system("mkdir -p " + args.save_dir)  # os.system("mkdir  " + args.save_dir)
 
     log_path = os.path.join(args.save_dir, "param.json")
     with open(log_path, "w") as fw:
-        fw.write(json.dumps(args.__dict__, indent=True))
+        fw.write(json.dumps(args.__dict__, indent=True))  # 写入参数字典到save/param.json
 
     # Fix the random seed of package random.
     random.seed(args.random_state)
@@ -79,6 +81,7 @@ if __name__ == "__main__":
         len(dataset.slot_alphabet),
         len(dataset.intent_alphabet))
     model.show_summary()
+    # print(model)
 
     # To train and evaluate the models.
     process = Processor(dataset, model, args.batch_size)
