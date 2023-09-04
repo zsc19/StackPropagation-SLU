@@ -1,10 +1,10 @@
 """
-@Author		:           Lee, Qin
+@Author		:           Zhou
 @StartTime	:           2018/08/13
-@Filename	:           module.py
+@Filename	:           process.py
 @Software	:           Pycharm
 @Framework  :           Pytorch
-@LastModify	:           2019/05/07
+@LastModify	:           2023/09/04
 """
 
 import math
@@ -47,12 +47,21 @@ class ModelManager(nn.Module):
             self.__args.dropout_rate
         )
 
+        # Initialize an Decoder object for slot.
+        self.__pre_slot_decoder = LSTMDecoder(
+            self.__args.encoder_hidden_dim + self.__args.attention_output_dim,
+            self.__args.slot_decoder_hidden_dim,
+            self.__num_slot, self.__args.dropout_rate,
+            embedding_dim=self.__args.slot_embedding_dim,
+            # extra_dim=self.__num_intent
+        )
         # Initialize an Decoder object for intent.
         self.__intent_decoder = LSTMDecoder(
             self.__args.encoder_hidden_dim + self.__args.attention_output_dim,
             self.__args.intent_decoder_hidden_dim,
             self.__num_intent, self.__args.dropout_rate,
-            embedding_dim=self.__args.intent_embedding_dim
+            embedding_dim=self.__args.intent_embedding_dim,
+            extra_dim=self.__num_slot
         )
         # Initialize an Decoder object for slot.
         self.__slot_decoder = LSTMDecoder(
@@ -69,6 +78,12 @@ class ModelManager(nn.Module):
         )
         self.__intent_embedding.weight.data = torch.eye(self.__num_intent)
         self.__intent_embedding.weight.requires_grad = False
+        """"""
+        self.__slot_embedding = nn.Embedding(
+            self.__num_slot, self.__num_slot
+        )
+        self.__slot_embedding.weight.data = torch.eye(self.__num_slot)
+        self.__slot_embedding.weight.requires_grad = False
 
     def show_summary(self):
         """
@@ -99,9 +114,22 @@ class ModelManager(nn.Module):
         attention_hiddens = self.__attention(word_tensor, seq_lens)
         hiddens = torch.cat([attention_hiddens, lstm_hiddens], dim=1)
 
+        """"""
+        pre_pred_slot = self.__pre_slot_decoder(
+            hiddens, seq_lens,
+            forced_input=forced_slot
+        )
+
+        if not self.__args.differentiable:
+            _, pre_idx_slot = pre_pred_slot.topk(1, dim=-1)
+            feed_slot = self.__slot_embedding(pre_idx_slot.squeeze(1))
+        else:
+            feed_slot = pre_pred_slot
+
         pred_intent = self.__intent_decoder(
             hiddens, seq_lens,
-            forced_input=forced_intent
+            forced_input=forced_intent,
+            extra_input=feed_slot
         )
 
         if not self.__args.differentiable:
@@ -117,12 +145,13 @@ class ModelManager(nn.Module):
         )
 
         if n_predicts is None:
-            return F.log_softmax(pred_slot, dim=1), F.log_softmax(pred_intent, dim=1)
+            return F.log_softmax(pre_pred_slot, dim=1), F.log_softmax(pred_slot, dim=1), F.log_softmax(pred_intent, dim=1)
         else:
-            _, slot_index = pred_slot.topk(n_predicts, dim=1)
+            _, pre_pred_slot = pred_slot.topk(n_predicts, dim=1)
             _, intent_index = pred_intent.topk(n_predicts, dim=1)
+            _, slot_index = pred_slot.topk(n_predicts, dim=1)
 
-            return slot_index.cpu().data.numpy().tolist(), intent_index.cpu().data.numpy().tolist()
+            return pre_pred_slot.cpu().data.numpy().tolist(), slot_index.cpu().data.numpy().tolist(), intent_index.cpu().data.numpy().tolist()
 
     def golden_intent_predict_slot(self, text, seq_lens, golden_intent, n_predicts=1):
         word_tensor, _ = self.__embedding(text)
