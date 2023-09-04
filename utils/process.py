@@ -1,10 +1,10 @@
 """
-@Author		:           Lee, Qin
+@Author		:           Zhou
 @StartTime	:           2018/08/13
 @Filename	:           process.py
 @Software	:           Pycharm
 @Framework  :           Pytorch
-@LastModify	:           2019/05/07
+@LastModify	:           2023/09/04
 """
 
 import torch
@@ -51,7 +51,7 @@ class Processor(object):
 
         dataloader = self.__dataset.batch_delivery('train')
         for epoch in range(0, self.__dataset.num_epoch):
-            total_slot_loss, total_intent_loss = 0.0, 0.0
+            total_pre_slot_loss, total_slot_loss, total_intent_loss = 0.0, 0.0, 0.0
 
             time_start = time.time()
             self.__model.train()
@@ -75,38 +75,41 @@ class Processor(object):
                 random_slot, random_intent = random.random(), random.random()
                 if random_slot < self.__dataset.slot_forcing_rate and \
                         random_intent < self.__dataset.intent_forcing_rate:
-                    slot_out, intent_out = self.__model(
+                    pre_slot_out, slot_out, intent_out = self.__model(
                         text_var, seq_lens, forced_slot=slot_var, forced_intent=intent_var
                     )
                 elif random_slot < self.__dataset.slot_forcing_rate:
-                    slot_out, intent_out = self.__model(
+                    pre_slot_out, slot_out, intent_out = self.__model(
                         text_var, seq_lens, forced_slot=slot_var
                     )
                 elif random_intent < self.__dataset.intent_forcing_rate:
-                    slot_out, intent_out = self.__model(
+                    pre_slot_out, slot_out, intent_out = self.__model(
                         text_var, seq_lens, forced_intent=intent_var
                     )
                 else:
-                    slot_out, intent_out = self.__model(text_var, seq_lens)
+                    pre_slot_out, slot_out, intent_out = self.__model(text_var, seq_lens)
 
+                pre_slot_loss = self.__criterion(pre_slot_out, slot_var)
                 slot_loss = self.__criterion(slot_out, slot_var)
                 intent_loss = self.__criterion(intent_out, intent_var)
-                batch_loss = slot_loss + intent_loss
+                batch_loss = pre_slot_loss + slot_loss + intent_loss
 
                 self.__optimizer.zero_grad()
                 batch_loss.backward()
                 self.__optimizer.step()
 
                 try:
+                    total_pre_slot_loss += pre_slot_loss.cpu().item()
                     total_slot_loss += slot_loss.cpu().item()
                     total_intent_loss += intent_loss.cpu().item()
                 except AttributeError:
                     total_slot_loss += slot_loss.cpu().data.numpy()[0]
+                    total_pre_slot_loss += pre_slot_loss.cpu().data.numpy()[0]
                     total_intent_loss += intent_loss.cpu().data.numpy()[0]
 
             time_con = time.time() - time_start
-            print('[Epoch {:2d}]: The total slot loss on train data is {:2.6f}, intent data is {:2.6f}, cost ' \
-                  'about {:2.6} seconds.'.format(epoch, total_slot_loss, total_intent_loss, time_con))
+            print('[Epoch {:2d}]: The total pre_slot loss on train data is {:2.6f}, slot loss is {:2.6f}, intent data is {:2.6f}, cost ' \
+                  'about {:2.6} seconds.'.format(epoch, total_pre_slot_loss, total_slot_loss, total_intent_loss, time_con))
 
             change, time_start = False, time.time()
             dev_f1_score, dev_acc, dev_sent_acc = self.estimate(if_dev=True, test_batch=self.__batch_size)
@@ -159,20 +162,20 @@ class Processor(object):
     @staticmethod
     def validate(model_path, dataset_path, batch_size):
         """
-        validation will write mistaken samples to files and make scores.
+        validation will write mistaken samples to files and make scores.  验证会将错误的样本写入文件并进行评分。
         """
 
         model = torch.load(model_path)
         dataset = torch.load(dataset_path)
 
-        # Get the sentence list in test dataset.
+        # Get the sentence list in test dataset.    获取测试数据集中的句子列表。
         sent_list = dataset.test_sentence
 
         pred_slot, real_slot, exp_pred_intent, real_intent, pred_intent = Processor.prediction(
             model, dataset, "test", batch_size
         )
 
-        # To make sure the directory for save error prediction.
+        # To make sure the directory for save error prediction.     确定保存错误预测的目录。
         mistake_dir = os.path.join(dataset.save_dir, "error")
         if not os.path.exists(mistake_dir):
             os.mkdir(mistake_dir)
@@ -181,7 +184,7 @@ class Processor(object):
         intent_file_path = os.path.join(mistake_dir, "intent.txt")
         both_file_path = os.path.join(mistake_dir, "both.txt")
 
-        # Write those sample with mistaken slot prediction.
+        # Write those sample with mistaken slot prediction.     写那些槽预测错误的样本。
         with open(slot_file_path, 'w') as fw:
             for w_list, r_slot_list, p_slot_list in zip(sent_list, real_slot, pred_slot):
                 if r_slot_list != p_slot_list:
@@ -189,7 +192,7 @@ class Processor(object):
                         fw.write(w + '\t' + r + '\t' + p + '\n')
                     fw.write('\n')
 
-        # Write those sample with mistaken intent prediction.
+        # Write those sample with mistaken intent prediction.      写那些意图预测错误的样本。
         with open(intent_file_path, 'w') as fw:
             for w_list, p_intent_list, r_intent, p_intent in zip(sent_list, pred_intent, real_intent, exp_pred_intent):
                 if p_intent != r_intent:
@@ -197,7 +200,7 @@ class Processor(object):
                         fw.write(w + '\t' + p + '\n')
                     fw.write(r_intent + '\t' + p_intent + '\n\n')
 
-        # Write those sample both have intent and slot errors.
+        # Write those sample both have intent and slot errors.      写那些意图和槽都错误的样本。
         with open(both_file_path, 'w') as fw:
             for w_list, r_slot_list, p_slot_list, p_intent_list, r_intent, p_intent in \
                     zip(sent_list, real_slot, pred_slot, pred_intent, real_intent, exp_pred_intent):
@@ -252,7 +255,7 @@ class Processor(object):
             if torch.cuda.is_available():
                 var_text = var_text.cuda()
 
-            slot_idx, intent_idx = model(var_text, seq_lens, n_predicts=1)
+            _, slot_idx, intent_idx = model(var_text, seq_lens, n_predicts=1)
             nested_slot = Evaluator.nested_list([list(Evaluator.expand_list(slot_idx))], seq_lens)[0]
             
             if mode == 'test':
